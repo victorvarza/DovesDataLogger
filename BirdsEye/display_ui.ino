@@ -103,6 +103,7 @@ void i2cBusRecover() {
 // A normal 1024-byte I2C transfer at 400kHz takes ~25ms.
 // If it takes >100ms, something is wrong (EMI glitch or bus hang).
 void safeDisplayUpdate() {
+  if (!displayAvailable) return;
   unsigned long start = millis();
   display.display();
   unsigned long elapsed = millis() - start;
@@ -315,6 +316,7 @@ void displaySetup() {
   delay(750);
 
   displayPage_boot();
+  displayAvailable = true;
 }
 
 void handleMenuPageSelection() {
@@ -577,6 +579,8 @@ static char serialEntryCycle(char c, int dir) {
 }
 
 void displayLoop() {
+  if (!displayAvailable) return;
+
   // GPS-lock hold: while a race session is waiting for a valid GPS lock to
   // create its log file (engine running, no lock yet), pin the user to the
   // tachometer. Navigation is disabled below until the lock arrives.

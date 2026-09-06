@@ -112,7 +112,26 @@ void sdSetTransferSpeed(bool fast) {
   }
 }
 
+// FAT file timestamps (creation/modified, visible in any file browser) have
+// nothing to do with GPS or DOVEX row timestamps — SdFat stamps every file
+// with FS_DEFAULT_DATE when no callback is registered, which is a fixed
+// Jan 1 of whatever year the FIRMWARE WAS COMPILED, not the real date. Wire
+// it to GPS-derived UTC once the module has a genuine time lock; before
+// that (or on a non-Sense/no-GPS boot) fall back to a fixed placeholder
+// rather than the compile-date artifact, so an unlocked-boot file doesn't
+// masquerade as being from whenever this image happened to be built.
+static void sdFatDateTime(uint16_t* date, uint16_t* time) {
+  if (gpsData.timeValid) {
+    *date = FS_DATE(2000 + gpsData.year, gpsData.month, gpsData.day);
+    *time = FS_TIME(gpsData.hour, gpsData.minute, gpsData.seconds);
+  } else {
+    *date = FS_DATE(2000, 1, 1);
+    *time = FS_TIME(0, 0, 0);
+  }
+}
+
 bool SD_SETUP() {
+  FsDateTime::setCallback(sdFatDateTime);
   sdCardUnformatted = false;
   if (sdSetSpiClock(SPI_SPEED)) {
     debugln(F("SD Card initialized successfully"));

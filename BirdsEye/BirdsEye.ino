@@ -98,6 +98,7 @@
 #include "gps_functions.h"
 #include "gps_status_page.h"
 #include "haversine.h"
+#include "health_log.h"
 #include "idle_policy.h"
 #include "local_time.h"
 #include "setting_parse.h"
@@ -819,6 +820,7 @@ const int PAGE_SD_FORMAT = 106;
 
 int currentPage = PAGE_BOOT;
 int lastPage = 0;
+bool displayAvailable = false;  // set true by displaySetup(); guards I2C display calls
 
 // "pageStart" defines where the UI starts, you cannot backup beyond this
 #ifdef ENDURANCE_MODE
@@ -935,6 +937,7 @@ void setup() {
 #ifdef HAS_DEBUG
   Serial.begin(9600);
   while (!Serial);
+  debugln(F("SETUP START"));
 #endif
 
   #ifndef SIM
@@ -956,7 +959,7 @@ void setup() {
     lastBatteryVoltage = getBatteryVoltage();
   #endif
 
-  displaySetup();
+  // displaySetup();  // skipped: no display connected, I2C hangs on init
 
   // setup sd card and confirm we can read track list
   sdSetupSuccess = SD_SETUP();
@@ -973,6 +976,9 @@ void setup() {
   // Load settings from SD (creates defaults on first boot)
   SETTINGS_SETUP();
 
+  // Periodic system-health snapshot, independent of race sessions.
+  HEALTH_SETUP();
+
   // Colour preference is applied HERE, not in the settings block further
   // down, because displaySetup() runs before the SD card exists — the panel
   // cannot learn the preference until settings are readable. This is the
@@ -980,22 +986,27 @@ void setup() {
   // flipping part-way through GPS_SETUP() (over a second on a cold start).
   // Anything other than an explicit "inverted" means normal, so a blank or
   // future value leaves the screen as it has always looked.
-  {
+  debugln(F("Before display_invert"));
+  if (displayAvailable) {
     char displayBuf[16];
     if (getSetting("display_invert", displayBuf, sizeof(displayBuf))) {
       displaySetInverted(strcasecmp(displayBuf, "inverted") == 0);
     }
   }
+  debugln(F("Before USB_MSC_SETUP"));
 
   // Register the USB mass-storage callbacks (no drive presented until the
   // user enters USB transfer mode). Needs a working SD card for block I/O.
   if (sdSetupSuccess) {
     USB_MSC_SETUP();
   }
+  debugln(F("After USB_MSC_SETUP"));
 
-  ACCEL_SETUP();
+  // ACCEL_SETUP();  // no IMU on this board
 
+  debugln(F("Before GPS_SETUP"));
   GPS_SETUP();
+  debugln(F("After GPS_SETUP"));
 
   // Read settings into runtime variables
   {
@@ -1264,6 +1275,19 @@ void setup() {
   // tachometer
   pinMode(tachInputPin, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(tachInputPin), TACH_COUNT_PULSE, FALLING);
+
+  // Always-on background BLE: advertise the file-transfer service from boot
+  // so the phone can connect and download .dovex files without navigating any
+  // menu (there is no display). The main loop is NOT parked (bleActive=false),
+  // so GPS and logging continue normally. SD arbitration returns BUSY during an
+  // active logging session, so a mid-race phone connection cannot trigger a
+  // reboot. After the session ends and the phone downloads, disconnect triggers
+  // the normal reboot (bleTransferEngaged path) — fine since the race is over.
+  CAMERA_FORCE_RELEASE();  // no-op with no camera; required before BLE_SETUP
+  BLE_SETUP();
+  bleActive = false;         // don't park GPS/logging — background mode
+  sdSetTransferSpeed(false); // revert SD to 2MHz (logging speed, not transfer speed)
+  debugln(F("BLE: background advertising started"));
 
   // Start hardware watchdog LAST - everything above must complete before
   // the 4-second timeout starts counting. If setup itself hangs, the
@@ -1872,7 +1896,7 @@ void autoRaceModeCheck() {
   if (millis() - settledSince < AUTO_RACE_MENU_GRACE_MS) return;
 
   bool rpmTriggered = tachLastReported > 500;
-  bool speedTriggered = gps_speed_mph >= 10.0;
+  bool speedTriggered = gps_speed_mph >= 5.0;
 
   if (rpmTriggered || speedTriggered) {
     debugln(F("Auto-entering race mode"));
@@ -2692,6 +2716,9 @@ void loop() {
   // already the budget.
   PROFILE_SECTION(loop_profile::kIdle, checkAutoIdle(); autoRaceModeCheck();
                   updateGpsLockHold());
+  // Once-a-minute health snapshot to SD — self-throttled, deliberately left
+  // outside the profiler's fixed 14-slot grid (see profiling.ino).
+  HEALTH_LOOP();
   // step the Insta360 auto-record FSM (GPS/tach fresh above)
   PROFILE_SECTION(loop_profile::kCamera, CAMERA_LOOP());
   // LED strip frame (RPM/pace/purple fresh above)

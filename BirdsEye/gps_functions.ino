@@ -942,6 +942,9 @@ void calculateGPSFrameRate() {
     unsigned long elapsed = gpsFrameEndTime - gpsFrameStartTime;
     // Calculate the frame rate (loops per second)
     gpsFrameRate = (float)gpsFrameCounter / (elapsed / 1000.0);
+    debug(F("GPS rate: "));
+    debug(gpsFrameRate);
+    debugln(F(" Hz"));
     // Feed the drop accounting: expected-vs-received against the
     // current nav-rate target (window math in the gps_stats pure unit).
     gps_stats::windowUpdate(gpsDropMonitor, gpsFrameCounter, elapsed,
