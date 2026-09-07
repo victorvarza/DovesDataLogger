@@ -7,7 +7,7 @@
 #include "health_log.h"
 
 #define HEALTH_LOG_PATH "/HEALTH.csv"
-#define HEALTH_LOG_INTERVAL_MS 10000UL
+#define HEALTH_LOG_INTERVAL_MS 30000UL
 
 static unsigned long healthLogLastWriteMs = 0;
 static File32 healthLogFile;
